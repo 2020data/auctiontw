@@ -2,6 +2,7 @@ import streamlit as st
 import time
 import random
 from io import BytesIO
+from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 
 # ==========================================
@@ -10,19 +11,18 @@ from PIL import Image, ImageDraw, ImageFont
 @st.cache_resource
 def get_auction_state():
     return {
-        "round": 1,               # 紀錄目前是第幾次拍賣
-        "image": None,            # 拍賣的圖片物件 (PIL Image)
-        "highest_bid": 0,         # 目前最高出價
-        "highest_bidder": None,   # 目前最高出價者
-        "last_bid_time": None,    # 最後一次出價的時間戳
-        "auction_ended": False,   # 拍賣是否已結束
-        "online_users": set(),    # 紀錄曾登入的買家
-        "bid_history": []         # 紀錄喊價歷史與情緒語錄
+        "round": 1,               
+        "image": None,            
+        "highest_bid": 0,         
+        "highest_bidder": None,   
+        "last_bid_time": None,    
+        "auction_ended": False,   
+        "online_users": set(),    
+        "bid_history": []         
     }
 
 state = get_auction_state()
 
-# 情緒價值語錄庫 (隨機抽取)
 HYPE_MESSAGES = [
     "🔥 霸氣出手！{user} 將價格推向 ${amount}，勢在必得！",
     "⚡ 閃電搶標！{user} 豪擲 ${amount}，還有人要跟嗎？",
@@ -32,39 +32,73 @@ HYPE_MESSAGES = [
 ]
 
 # ==========================================
-# 2. 圖片處理函數 (產生得標結果圖)
+# 2. 圖片處理函數 (產生精美「獎狀」)
 # ==========================================
 def generate_winner_image():
-    original = state["image"]
-    width, height = original.size
+    # 獎狀尺寸設定 (寬 1000px, 高 800px)
+    cert_width, cert_height = 1000, 800
+    # 建立帶有米黃色/象牙白底色的獎狀畫布
+    cert = Image.new("RGB", (cert_width, cert_height), "#FDF5E6")
+    draw = ImageDraw.Draw(cert)
     
-    new_height = height + 100
-    new_img = Image.new("RGB", (width, new_height), "white")
-    new_img.paste(original, (0, 0))
+    # 畫上雙層金色邊框，增加獎狀的正式感
+    draw.rectangle([20, 20, cert_width-20, cert_height-20], outline="#DAA520", width=8)
+    draw.rectangle([35, 35, cert_width-35, cert_height-35], outline="#DAA520", width=2)
     
-    draw = ImageDraw.Draw(new_img)
-    
+    # 嘗試載入支援中文的字體 (設定多種大小)
     try:
-        font = ImageFont.truetype("msjh.ttc", max(24, int(width/25))) 
+        font_title = ImageFont.truetype("msjhbd.ttc", 50)  # 微軟正黑體粗體
+        font_text = ImageFont.truetype("msjh.ttc", 36)     # 一般
+        font_price = ImageFont.truetype("msjhbd.ttc", 48)  # 金額用粗體
     except:
         try:
-            font = ImageFont.truetype("PingFang.ttc", max(24, int(width/25)))
+            font_title = ImageFont.truetype("PingFang.ttc", 50) # Mac 常見字體
+            font_text = ImageFont.truetype("PingFang.ttc", 36)
+            font_price = ImageFont.truetype("PingFang.ttc", 48)
         except:
-            font = ImageFont.load_default()
-            
-    winner_text = f"第 {state['round']} 場得標者: {state['highest_bidder']} | 金額: ${state['highest_bid']}"
+            font_title = ImageFont.load_default()
+            font_text = ImageFont.load_default()
+            font_price = ImageFont.load_default()
+
+    # --- 獎狀標題 ---
+    title = "🏅 拍 賣 得 標 證 明 書 🏅"
+    title_bbox = draw.textbbox((0, 0), title, font=font_title)
+    title_w = title_bbox[2] - title_bbox[0]
+    draw.text(((cert_width - title_w) / 2, 60), title, fill="#8B0000", font=font_title) # 深紅色
+
+    # --- 獎狀內文 ---
+    info_1 = f"茲證明買家： {state['highest_bidder']}"
+    info_2 = f"於第 {state['round']} 場拍賣會中，以最高金額"
+    info_3 = f"NT$ {state['highest_bid']}"
     
-    text_bbox = draw.textbbox((0, 0), winner_text, font=font)
-    text_width = text_bbox[2] - text_bbox[0]
-    text_height = text_bbox[3] - text_bbox[1]
+    draw.text((100, 160), info_1, fill="black", font=font_text)
+    draw.text((100, 220), info_2, fill="black", font=font_text)
+    draw.text((100, 280), info_3, fill="#B22222", font=font_price) # 金額用亮紅色
+
+    # --- 處理與貼上拍賣品照片 ---
+    # 先複製一份原圖避免影響網頁上的顯示
+    item_img = state["image"].copy()
     
-    x = (width - text_width) / 2
-    y = height + (100 - text_height) / 2 - 10
+    # 將圖片等比例縮小以適應獎狀空間 (最大寬度 600, 最大高度 320)
+    item_img.thumbnail((600, 320))
+    img_w, img_h = item_img.size
     
-    draw.text((x, y), winner_text, fill="black", font=font)
+    # 計算讓圖片水平置中的 X 座標，以及 Y 座標
+    paste_x = int((cert_width - img_w) / 2)
+    paste_y = 360
     
+    # 在圖片背後畫一個深灰色外框
+    draw.rectangle([paste_x-4, paste_y-4, paste_x+img_w+3, paste_y+img_h+3], fill="gray")
+    # 將拍賣品圖片貼到獎狀上
+    cert.paste(item_img, (paste_x, paste_y))
+
+    # --- 底部日期落款 ---
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    draw.text((cert_width - 350, cert_height - 100), f"發證日期：{current_date}", fill="black", font=font_text)
+    
+    # 轉為 Bytes 供下載
     buf = BytesIO()
-    new_img.save(buf, format="PNG")
+    cert.save(buf, format="PNG")
     return buf.getvalue()
 
 # ==========================================
@@ -75,7 +109,6 @@ st.set_page_config(page_title="即時圖片拍賣系統", page_icon="🔨", layo
 if "username" not in st.session_state:
     st.session_state.username = ""
 
-# --- 側邊欄：自由登入與線上名單 ---
 with st.sidebar:
     st.header("👤 參與者登入")
     st.info("觀看拍賣不需登入，欲參與喊價請先設定名稱。")
@@ -83,7 +116,7 @@ with st.sidebar:
     if st.button("進入拍賣會"):
         if name_input.strip():
             st.session_state.username = name_input.strip()
-            state["online_users"].add(st.session_state.username) # 加入全域廣播名單
+            state["online_users"].add(st.session_state.username)
             st.success(f"歡迎大老闆：{st.session_state.username}！")
         else:
             st.error("名稱不能為空！")
@@ -96,7 +129,6 @@ with st.sidebar:
     else:
         st.write("目前尚無買家入座")
 
-# 標題
 st.title(f"🔨 即時圖片拍賣系統 - 第 {state['round']} 場")
 
 # --- 階段 A：上傳圖片 ---
@@ -111,22 +143,19 @@ if state["image"] is None:
             state["highest_bidder"] = None
             state["last_bid_time"] = None
             state["auction_ended"] = False
-            state["bid_history"] = [] # 清空歷史紀錄
+            state["bid_history"] = [] 
             st.rerun()
 
 # --- 階段 B：拍賣進行中 ---
 else:
-    # 使用左右分欄：左邊放圖片，右邊放計時器與出價歷史
     col_img, col_info = st.columns([1, 1])
     
     with col_img:
         st.image(state["image"], use_container_width=True, caption=f"第 {state['round']} 場競標拍賣品")
 
     with col_info:
-        # 每秒自動更新的計時與狀態看板
         @st.fragment(run_every=1)
         def auction_display_board():
-            # 1. 顯示倒數計時與當前最高價
             if state["last_bid_time"] is not None and not state["auction_ended"]:
                 elapsed = time.time() - state["last_bid_time"]
                 time_left = 10.0 - elapsed
@@ -147,9 +176,8 @@ else:
 
             st.divider()
             
-            # 2. 顯示拍賣熱絡歷史 (最新出價在最上面)
             st.subheader("📜 現場戰況")
-            with st.container(height=250): # 固定高度產生捲動軸
+            with st.container(height=250):
                 if not state["bid_history"]:
                     st.write("靜待第一位勇者出價...")
                 else:
@@ -160,7 +188,7 @@ else:
 
     st.divider()
 
-    # --- 互動區塊 (出價操作區) ---
+    # --- 互動區塊 ---
     if not state["auction_ended"]:
         if not st.session_state.username:
             st.warning("👈 您目前正在觀看拍賣。若要參與喊價，請先在左側欄位設定名稱並「進入拍賣會」！")
@@ -168,7 +196,6 @@ else:
             st.subheader(f"💰 {st.session_state.username}，請進行喊價")
             min_bid = state["highest_bid"] + 1
             
-            # 排版：輸入框、確認按鈕、快速加碼按鈕
             c1, c2, c3 = st.columns([2, 1, 1])
             with c1:
                 new_bid = st.number_input("自由輸入出價金額", min_value=min_bid, step=10, label_visibility="collapsed")
@@ -177,12 +204,9 @@ else:
             with c3:
                 btn_plus_500 = st.button("🚀 霸氣加價 $500", use_container_width=True)
 
-            # 處理出價邏輯
             if btn_custom or btn_plus_500:
-                # 決定實際出價金額
                 actual_bid = state["highest_bid"] + 500 if btn_plus_500 else new_bid
                 
-                # 再次驗證是否逾時
                 if state["last_bid_time"] is not None and (time.time() - state["last_bid_time"]) >= 10:
                     st.error("很抱歉，拍賣剛剛已經結束！出價無效。")
                     state["auction_ended"] = True
@@ -192,10 +216,8 @@ else:
                     state["highest_bidder"] = st.session_state.username
                     state["last_bid_time"] = time.time()
                     
-                    # 產生情緒價值語錄並加入歷史紀錄最前方 (新在上方)
                     hype_text = random.choice(HYPE_MESSAGES).format(user=st.session_state.username, amount=actual_bid)
                     state["bid_history"].insert(0, hype_text)
-                    
                     st.rerun()
                 else:
                     st.error("出價必須高於目前最高金額！")
@@ -205,12 +227,16 @@ else:
         
         if st.session_state.username and st.session_state.username == state["highest_bidder"]:
             st.balloons()
-            st.markdown("### 👑 恭喜您得標！請下載您的專屬證明圖片：")
+            st.markdown("### 👑 恭喜您得標！為您頒發專屬證書：")
+            
+            # --- 在畫面上直接預覽獎狀 ---
             img_bytes = generate_winner_image()
+            st.image(img_bytes, width=600, caption="您的專屬得標證明書")
+            
             st.download_button(
-                label="📥 下載得標圖片",
+                label="📥 下載得標獎狀",
                 data=img_bytes,
-                file_name=f"auction_round_{state['round']}_winner.png",
+                file_name=f"auction_certificate_{state['round']}.png",
                 mime="image/png",
                 type="primary"
             )
