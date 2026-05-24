@@ -1,9 +1,31 @@
 import streamlit as st
 import time
 import random
+import os
+import urllib.request
 from io import BytesIO
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
+
+# ==========================================
+# 0. 自動準備中文字體 (解決中文顯示問題)
+# ==========================================
+@st.cache_resource
+def get_chinese_font(size):
+    font_path = "NotoSansTC-Regular.ttf"
+    # 如果本地沒有這個字體檔案，自動從開源庫下載
+    if not os.path.exists(font_path):
+        url = "https://github.com/googlefonts/noto-cjk/raw/main/Sans/ttf/NotoSansTC-Regular.ttf"
+        try:
+            urllib.request.urlretrieve(url, font_path)
+        except Exception as e:
+            st.error(f"字體下載失敗，請手動下載中文字體並命名為 {font_path}")
+            return ImageFont.load_default()
+    
+    try:
+        return ImageFont.truetype(font_path, size)
+    except:
+        return ImageFont.load_default()
 
 # ==========================================
 # 1. 初始化全局狀態 (跨使用者共享)
@@ -18,7 +40,8 @@ def get_auction_state():
         "last_bid_time": None,    
         "auction_ended": False,   
         "online_users": set(),    
-        "bid_history": []         
+        "bid_history": [],
+        "cert_template": None     # 儲存使用者自訂的獎狀底圖
     }
 
 state = get_auction_state()
@@ -35,68 +58,83 @@ HYPE_MESSAGES = [
 # 2. 圖片處理函數 (產生精美「獎狀」)
 # ==========================================
 def generate_winner_image():
-    # 獎狀尺寸設定 (寬 1000px, 高 800px)
     cert_width, cert_height = 1000, 800
-    # 建立帶有米黃色/象牙白底色的獎狀畫布
-    cert = Image.new("RGB", (cert_width, cert_height), "#FDF5E6")
-    draw = ImageDraw.Draw(cert)
     
-    # 畫上雙層金色邊框，增加獎狀的正式感
-    draw.rectangle([20, 20, cert_width-20, cert_height-20], outline="#DAA520", width=8)
-    draw.rectangle([35, 35, cert_width-35, cert_height-35], outline="#DAA520", width=2)
-    
-    # 嘗試載入支援中文的字體 (設定多種大小)
-    try:
-        font_title = ImageFont.truetype("msjhbd.ttc", 50)  # 微軟正黑體粗體
-        font_text = ImageFont.truetype("msjh.ttc", 36)     # 一般
-        font_price = ImageFont.truetype("msjhbd.ttc", 48)  # 金額用粗體
-    except:
-        try:
-            font_title = ImageFont.truetype("PingFang.ttc", 50) # Mac 常見字體
-            font_text = ImageFont.truetype("PingFang.ttc", 36)
-            font_price = ImageFont.truetype("PingFang.ttc", 48)
-        except:
-            font_title = ImageFont.load_default()
-            font_text = ImageFont.load_default()
-            font_price = ImageFont.load_default()
+    # --- 步驟 A：準備底圖 (自訂樣板 vs 預設精美底圖) ---
+    if state["cert_template"] is not None:
+        # 使用使用者上傳的樣板
+        cert = state["cert_template"].copy()
+        cert = cert.resize((cert_width, cert_height))
+        draw = ImageDraw.Draw(cert)
+    else:
+        # 產生高質感的預設底圖
+        cert = Image.new("RGB", (cert_width, cert_height), "#FCF9F2") # 典雅米白色
+        draw = ImageDraw.Draw(cert)
+        
+        # 繪製精緻外框
+        draw.rectangle([25, 25, cert_width-25, cert_height-25], outline="#B8860B", width=12) # 暗金色粗框
+        draw.rectangle([45, 45, cert_width-45, cert_height-45], outline="#DAA520", width=3)  # 亮金色細框
+        
+        # 繪製角落裝飾 (簡單的方形幾何)
+        for x, y in [(25, 25), (cert_width-25-20, 25), (25, cert_height-25-20), (cert_width-25-20, cert_height-25-20)]:
+            draw.rectangle([x, y, x+20, y+20], fill="#8B0000") # 深紅角落
 
-    # --- 獎狀標題 ---
-    title = "🏅 拍 賣 得 標 證 明 書 🏅"
+    # 載入字體
+    font_title = get_chinese_font(48)
+    font_text = get_chinese_font(32)
+    font_price = get_chinese_font(42)
+    font_seal = get_chinese_font(28)
+
+    # --- 步驟 B：文字排版 ---
+    # 標題
+    title = "拍 賣 得 標 證 明 書"
     title_bbox = draw.textbbox((0, 0), title, font=font_title)
     title_w = title_bbox[2] - title_bbox[0]
-    draw.text(((cert_width - title_w) / 2, 60), title, fill="#8B0000", font=font_title) # 深紅色
+    draw.text(((cert_width - title_w) / 2, 80), title, fill="#333333", font=font_title)
 
-    # --- 獎狀內文 ---
-    info_1 = f"茲證明買家： {state['highest_bidder']}"
+    # 內文
+    info_1 = f"茲證明買家：【 {state['highest_bidder']} 】"
     info_2 = f"於第 {state['round']} 場拍賣會中，以最高金額"
     info_3 = f"NT$ {state['highest_bid']}"
+    info_4 = "成功競標取得此拍品，特發此證以資證明。"
     
-    draw.text((100, 160), info_1, fill="black", font=font_text)
-    draw.text((100, 220), info_2, fill="black", font=font_text)
-    draw.text((100, 280), info_3, fill="#B22222", font=font_price) # 金額用亮紅色
+    draw.text((120, 180), info_1, fill="#111111", font=font_text)
+    draw.text((120, 240), info_2, fill="#111111", font=font_text)
+    draw.text((120, 300), info_3, fill="#8B0000", font=font_price) # 金額用深紅色放大
+    draw.text((120, 380), info_4, fill="#111111", font=font_text)
 
-    # --- 處理與貼上拍賣品照片 ---
-    # 先複製一份原圖避免影響網頁上的顯示
+    # --- 步驟 C：處理與貼上拍賣品照片 ---
     item_img = state["image"].copy()
-    
-    # 將圖片等比例縮小以適應獎狀空間 (最大寬度 600, 最大高度 320)
-    item_img.thumbnail((600, 320))
+    # 將圖片等比例縮小 (放在畫面右下方或正下方)
+    item_img.thumbnail((360, 280))
     img_w, img_h = item_img.size
     
-    # 計算讓圖片水平置中的 X 座標，以及 Y 座標
-    paste_x = int((cert_width - img_w) / 2)
-    paste_y = 360
+    paste_x = 120
+    paste_y = 450
     
-    # 在圖片背後畫一個深灰色外框
-    draw.rectangle([paste_x-4, paste_y-4, paste_x+img_w+3, paste_y+img_h+3], fill="gray")
-    # 將拍賣品圖片貼到獎狀上
+    # 畫照片的外框與陰影
+    draw.rectangle([paste_x-5, paste_y-5, paste_x+img_w+4, paste_y+img_h+4], fill="#DDDDDD")
+    draw.rectangle([paste_x-2, paste_y-2, paste_x+img_w+1, paste_y+img_h+1], fill="#FFFFFF")
     cert.paste(item_img, (paste_x, paste_y))
 
-    # --- 底部日期落款 ---
+    # --- 步驟 D：印鑑與落款 ---
     current_date = datetime.now().strftime("%Y-%m-%d")
-    draw.text((cert_width - 350, cert_height - 100), f"發證日期：{current_date}", fill="black", font=font_text)
+    draw.text((cert_width - 380, cert_height - 180), f"發證日期：{current_date}", fill="#333333", font=font_text)
     
-    # 轉為 Bytes 供下載
+    # 畫一個仿古代的紅色圓形印章「拍賣認證」
+    seal_r = 50
+    seal_x = cert_width - 200
+    seal_y = cert_height - 250
+    draw.ellipse([seal_x-seal_r, seal_y-seal_r, seal_x+seal_r, seal_y+seal_r], outline="#C11B17", width=5)
+    draw.ellipse([seal_x-seal_r+8, seal_y-seal_r+8, seal_x+seal_r-8, seal_y+seal_r-8], outline="#C11B17", width=2)
+    
+    seal_text = "拍賣\n認證"
+    seal_bbox = draw.multiline_textbbox((0, 0), seal_text, font=font_seal, align="center")
+    seal_w = seal_bbox[2] - seal_bbox[0]
+    seal_h = seal_bbox[3] - seal_bbox[1]
+    draw.multiline_text((seal_x - seal_w/2, seal_y - seal_h/2 - 5), seal_text, fill="#C11B17", font=font_seal, align="center")
+
+    # 轉為 Bytes
     buf = BytesIO()
     cert.save(buf, format="PNG")
     return buf.getvalue()
@@ -109,6 +147,7 @@ st.set_page_config(page_title="即時圖片拍賣系統", page_icon="🔨", layo
 if "username" not in st.session_state:
     st.session_state.username = ""
 
+# --- 側邊欄設計 ---
 with st.sidebar:
     st.header("👤 參與者登入")
     st.info("觀看拍賣不需登入，欲參與喊價請先設定名稱。")
@@ -128,6 +167,18 @@ with st.sidebar:
             st.markdown(f"- 🤵 **{user}**")
     else:
         st.write("目前尚無買家入座")
+        
+    st.divider()
+    with st.expander("⚙️ 系統設定 (管理員專用)"):
+        st.write("上傳自訂的獎狀底圖 (建議尺寸比例 5:4，如 1000x800 px)")
+        template_file = st.file_uploader("匯入獎狀樣板", type=["jpg", "png", "jpeg"])
+        if template_file:
+            state["cert_template"] = Image.open(template_file)
+            st.success("自訂獎狀樣板已套用！")
+        elif state["cert_template"] is not None:
+            if st.button("清除自訂樣板，恢復預設"):
+                state["cert_template"] = None
+                st.rerun()
 
 st.title(f"🔨 即時圖片拍賣系統 - 第 {state['round']} 場")
 
@@ -175,7 +226,6 @@ else:
                 st.metric("🏆 最終得標金額", f"${state['highest_bid']}", f"得標者: {state['highest_bidder']}")
 
             st.divider()
-            
             st.subheader("📜 現場戰況")
             with st.container(height=250):
                 if not state["bid_history"]:
@@ -229,9 +279,8 @@ else:
             st.balloons()
             st.markdown("### 👑 恭喜您得標！為您頒發專屬證書：")
             
-            # --- 在畫面上直接預覽獎狀 ---
             img_bytes = generate_winner_image()
-            st.image(img_bytes, width=600, caption="您的專屬得標證明書")
+            st.image(img_bytes, width=700, caption="您的專屬得標證明書")
             
             st.download_button(
                 label="📥 下載得標獎狀",
